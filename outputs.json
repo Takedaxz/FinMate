@@ -1,0 +1,7 @@
+{
+  "FinMateStack": {
+    "ApiUrl": "https://q9af09runh.execute-api.ap-southeast-1.amazonaws.com/prod/",
+    "PortfolioBucket": "finmate-portfolios-417447013956-ap-southeast-1",
+    "FinMateApiEndpoint477ED441": "https://q9af09runh.execute-api.ap-southeast-1.amazonaws.com/prod/"
+  }
+}

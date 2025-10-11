@@ -1,0 +1,21 @@
+{
+  "name": "finmate-lambda",
+  "version": "1.0.0",
+  "description": "Lambda functions for FinMate AI Portfolio Advisor",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.906.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.901.0",
+    "@aws-sdk/client-lambda": "^3.490.0",
+    "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/s3-request-presigner": "^3.490.0",
+    "axios": "^1.6.0",
+    "csv-parser": "^3.0.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.155",
+    "@types/node": "^24.6.2",
+    "@types/uuid": "^10.0.0"
+  }
+}
