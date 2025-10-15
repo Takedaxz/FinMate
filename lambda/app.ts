@@ -323,8 +323,6 @@ async function invokeBedrockAgent(portfolio: Portfolio, portfolioId: string): Pr
   }
 
   try {
-    const sessionId = uuidv4();
-    
     // Create comprehensive input for the agent
     const agentInput = `Please analyze this portfolio and provide recommendations:
 
@@ -350,7 +348,7 @@ Focus on diversification, risk management, and optimization opportunities based 
     const command = new InvokeAgentCommand({
       agentId: agentId,
       agentAliasId: agentAliasId,
-      sessionId: sessionId,
+      sessionId: 'finmate-session', // Use static session ID
       inputText: agentInput,
     });
 
@@ -412,7 +410,7 @@ function parseAgentResponse(responseText: string, traces: any[]): any {
   };
 
   // Extract recommendations from agent response
-  const recommendationMatches = responseText.match(/\d+\.\s+(.+?)(?=\n\d+\.|\n\n|$)/gs);
+  const recommendationMatches = responseText.match(/\d+\.\s+(.+?)(?=\n\d+\.|\n\n|$)/g);
   if (recommendationMatches) {
     recommendations = recommendationMatches.slice(0, 3).map((rec, idx) => {
       const cleanRec = rec.replace(/^\d+\.\s+/, '').trim();
@@ -564,7 +562,7 @@ Format as JSON:
     }
   ],
   "agentMetadata": {
-    "model": "anthropic.claude-3-sonnet-20240229-v1:0",
+    "model": "arn:aws:bedrock:ap-southeast-1:417447013956:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0",
     "reasoning": "AI agent performed multi-step analysis including risk assessment, diversification analysis, and personalized recommendations",
     "capabilities": ["Risk Assessment", "Diversification Analysis", "Performance Optimization", "Market Analysis"]
   }
@@ -572,7 +570,7 @@ Format as JSON:
 
     // Use Bedrock Claude for agent reasoning
     const bedrockResponse = await bedrockClient.send(new InvokeModelCommand({
-      modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
+      modelId: 'arn:aws:bedrock:ap-southeast-1:417447013956:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0',
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify({
@@ -675,7 +673,7 @@ function createStructuredAgentAnalysis(portfolio: Portfolio, metrics: any, marke
     summary: `Portfolio analysis completed using AI agent. Total value: $${metrics.total_value.toLocaleString()}, P&L: ${metrics.total_pnl >= 0 ? '+' : ''}${metrics.total_pnl_percent.toFixed(2)}%. Portfolio beta: ${metrics.portfolio_beta.toFixed(2)}. Diversification score: ${Math.max(1, diversificationScore)}/10. This is not financial advice.`,
     recommendations: recommendations.slice(0, 3),
     agentMetadata: {
-      model: 'anthropic.claude-3-sonnet-20240229-v1:0',
+      model: 'arn:aws:bedrock:ap-southeast-1:417447013956:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0',
       timestamp: new Date().toISOString(),
       reasoning: 'AI agent performed multi-step analysis including risk assessment, diversification analysis, and personalized recommendations',
       capabilities: ['Risk Assessment', 'Diversification Analysis', 'Performance Optimization', 'Market Analysis']
@@ -737,7 +735,7 @@ Remember: This is educational content, not financial advice.`;
 
     // Call Bedrock Claude model
     const bedrockResponse = await bedrockClient.send(new InvokeModelCommand({
-      modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
+      modelId: 'arn:aws:bedrock:ap-southeast-1:417447013956:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0',
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify({

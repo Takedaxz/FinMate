@@ -29,3 +29,6 @@ lambda-layer/python/*
 *.md
 prompt.txt
 *.sh
+
+*.json
+*.zip

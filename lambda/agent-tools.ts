@@ -126,7 +126,31 @@ async function handleGetMarketData(parameters?: Array<any>, requestBody?: any): 
     const portfolioIdParam = parameters.find(p => p.name === 'portfolio_id');
     
     if (tickersParam) {
-      tickers = JSON.parse(tickersParam.value);
+      try {
+        // Handle both array format and string format
+        if (Array.isArray(tickersParam.value)) {
+          tickers = tickersParam.value;
+        } else if (typeof tickersParam.value === 'string') {
+          // Try to parse as JSON first, then handle string format
+          try {
+            const parsed = JSON.parse(tickersParam.value);
+            if (Array.isArray(parsed)) {
+              // Clean up any string elements that might have brackets
+              tickers = parsed.map(ticker => 
+                typeof ticker === 'string' ? ticker.replace(/[\[\]]/g, '') : ticker
+              );
+            } else {
+              tickers = [parsed.toString().replace(/[\[\]]/g, '')];
+            }
+          } catch {
+            // If JSON parse fails, clean the string and use as single ticker
+            tickers = [tickersParam.value.replace(/[\[\]]/g, '')];
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing tickers parameter:', error);
+        tickers = [];
+      }
     }
     if (portfolioIdParam) {
       portfolioId = portfolioIdParam.value;
@@ -134,8 +158,39 @@ async function handleGetMarketData(parameters?: Array<any>, requestBody?: any): 
   }
 
   if (requestBody?.content) {
-    tickers = requestBody.content.tickers || tickers;
-    portfolioId = requestBody.content.portfolio_id || portfolioId;
+    // Handle requestBody.content structure from agent
+    if (requestBody.content['application/json']?.properties) {
+      const properties = requestBody.content['application/json'].properties;
+      const tickersProp = properties.find((p: any) => p.name === 'tickers');
+      if (tickersProp) {
+        try {
+          if (Array.isArray(tickersProp.value)) {
+            tickers = tickersProp.value;
+          } else if (typeof tickersProp.value === 'string') {
+            try {
+              const parsed = JSON.parse(tickersProp.value);
+              if (Array.isArray(parsed)) {
+                // Clean up any string elements that might have brackets
+                tickers = parsed.map(ticker => 
+                  typeof ticker === 'string' ? ticker.replace(/[\[\]]/g, '') : ticker
+                );
+              } else {
+                tickers = [parsed.toString().replace(/[\[\]]/g, '')];
+              }
+            } catch {
+              // If JSON parse fails, clean the string and use as single ticker
+              tickers = [tickersProp.value.replace(/[\[\]]/g, '')];
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing tickers from requestBody:', error);
+        }
+      }
+    } else {
+      // Fallback to direct content access
+      tickers = requestBody.content.tickers || tickers;
+      portfolioId = requestBody.content.portfolio_id || portfolioId;
+    }
   }
 
   // Invoke market data Lambda
