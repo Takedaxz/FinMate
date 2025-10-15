@@ -1,0 +1,7 @@
+{
+  "Variables": {
+    "MARKET_DATA_FUNCTION": "FinMateStack-MarketDataFunction4B3C2D7B-gUvUPqtj6Ooh",
+    "COMPUTE_METRICS_FUNCTION": "FinMateStack-ComputeMetricsFunctionBE918CD8-r1DwgZbPhIhJ",
+    "WRITE_REPORT_FUNCTION": "FinMateStack-WriteReportFunction33ED66A6-9MzUUAlDNfQO"
+  }
+}

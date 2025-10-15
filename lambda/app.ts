@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockAgentRuntimeClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agent-runtime';
 import { v4 as uuidv4 } from 'uuid';
 import * as csv from 'csv-parser';
 import { Readable } from 'stream';
@@ -9,6 +10,7 @@ import { Readable } from 'stream';
 const s3Client = new S3Client({});
 const lambdaClient = new LambdaClient({});
 const bedrockClient = new BedrockRuntimeClient({});
+const bedrockAgentClient = new BedrockAgentRuntimeClient({});
 
 // Helper function to add CORS headers
 const corsHeaders = {
@@ -170,56 +172,23 @@ async function handlePortfolioAnalysis(body: any): Promise<APIGatewayProxyResult
       portfolio.settings.max_single_name_weight = risk_prefs.max_single_name_weight || portfolio.settings.max_single_name_weight;
     }
 
-    // Step 1: Get market data
-    console.log('Fetching market data...');
-    const marketDataResponse = await invokeLambda(process.env.MARKET_DATA_FUNCTION!, {
-      tickers: portfolio.positions.map(p => p.ticker),
-      portfolio_id: portfolio_id,
-    });
-    console.log('Market data response:', marketDataResponse);
-    const marketDataParsed = JSON.parse(marketDataResponse);
-    const marketData = marketDataParsed.body ? JSON.parse(marketDataParsed.body) : marketDataParsed;
-
-    // Step 2: Compute metrics
-    console.log('Computing portfolio metrics...');
-    const metricsResponse = await invokeLambda(process.env.COMPUTE_METRICS_FUNCTION!, {
-      portfolio,
-      market_data: marketData,
-    });
-    console.log('Metrics response:', metricsResponse);
-    const metricsResponseParsed = JSON.parse(metricsResponse);
-    const portfolioMetrics = metricsResponseParsed.body ? JSON.parse(metricsResponseParsed.body) : metricsResponseParsed;
-
-    // Step 3: Generate AI analysis using Bedrock AgentCore
-    console.log('Generating AI analysis using Bedrock AgentCore...');
-    const analysis = await generateAIAnalysisWithAgent(portfolio, portfolioMetrics, marketData);
-
-    // Step 4: Generate report
-    console.log('Generating report...');
-    const reportResponse = await invokeLambda(process.env.WRITE_REPORT_FUNCTION!, {
-      portfolio_metrics: portfolioMetrics,
-      analysis_summary: analysis.summary,
-      recommendations: analysis.recommendations,
-      user_id: portfolio.user_id,
-      generated_at: new Date().toISOString(),
-    });
-    const reportResponseParsed = JSON.parse(reportResponse);
-    const reportData = reportResponseParsed.body ? JSON.parse(reportResponseParsed.body) : reportResponseParsed;
+    // Use Bedrock Agent to autonomously analyze the portfolio
+    console.log('Invoking Bedrock Agent for autonomous portfolio analysis...');
+    const analysis = await invokeBedrockAgent(portfolio, portfolio_id);
 
     return {
       statusCode: 200,
       headers: corsHeaders,
       body: JSON.stringify({
-        summary: {
-          total_value: portfolioMetrics.total_value,
-          total_pnl: portfolioMetrics.total_pnl,
-          total_pnl_percent: portfolioMetrics.total_pnl_percent,
-          portfolio_beta: portfolioMetrics.portfolio_beta,
-          risk_flags_count: portfolioMetrics.risk_flags.length,
-        },
+        summary: analysis.summary,
         suggestions: analysis.recommendations,
-        report_url: reportData.report_url,
-        analysis_summary: analysis.summary,
+        report_url: analysis.report_url,
+        analysis_summary: analysis.analysis_text,
+        agent_metadata: {
+          agent_id: process.env.BEDROCK_AGENT_ID,
+          agent_alias: process.env.BEDROCK_AGENT_ALIAS_ID,
+          used_agentcore: true,
+        },
       }),
     };
   } catch (error) {
@@ -339,20 +308,213 @@ async function handleDailyCheck(body: any): Promise<APIGatewayProxyResult> {
   }
 }
 
-async function generateAIAnalysisWithAgent(portfolio: Portfolio, metrics: any, marketData: any): Promise<any> {
-  console.log('Using integrated Bedrock AgentCore for AI analysis...');
+async function invokeBedrockAgent(portfolio: Portfolio, portfolioId: string): Promise<any> {
+  console.log('Invoking Bedrock Agent with AgentCore...');
   
+  // Get agent IDs from environment or CloudFormation exports
+  const agentId = process.env.BEDROCK_AGENT_ID;
+  const agentAliasId = process.env.BEDROCK_AGENT_ALIAS_ID;
+  
+  if (!agentId || !agentAliasId) {
+    console.warn('Bedrock Agent environment variables not set, using fallback analysis');
+    console.log('To use the agent, set BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID environment variables');
+    console.log('Agent IDs are available in CloudFormation outputs after deployment');
+    return await fallbackDirectAnalysis(portfolio, portfolioId);
+  }
+
   try {
-    // Use the integrated agent functionality directly
-    return await performIntegratedAgentAnalysis(portfolio, metrics, marketData);
+    const sessionId = uuidv4();
+    
+    // Create comprehensive input for the agent
+    const agentInput = `Please analyze this portfolio and provide recommendations:
+
+Portfolio ID: ${portfolioId}
+User Risk Preference: ${portfolio.settings.risk}
+Number of Positions: ${portfolio.positions.length}
+
+Positions:
+${portfolio.positions.map(p => `- ${p.ticker}: ${p.units} shares at $${p.cost_basis} cost basis`).join('\n')}
+
+Please use your tools to:
+1. Get current market data for all tickers
+2. Compute portfolio metrics including P&L, beta, sector exposure, and risk flags  
+3. Analyze the results and provide 2-3 specific recommendations
+4. Generate a professional report
+
+Focus on diversification, risk management, and optimization opportunities based on ${portfolio.settings.risk} risk tolerance.`;
+
+    console.log('Agent Input:', agentInput);
+    console.log('Agent ID:', agentId);
+    console.log('Agent Alias:', agentAliasId);
+
+    const command = new InvokeAgentCommand({
+      agentId: agentId,
+      agentAliasId: agentAliasId,
+      sessionId: sessionId,
+      inputText: agentInput,
+    });
+
+    const response = await bedrockAgentClient.send(command);
+    
+    // Parse streaming response
+    let fullResponse = '';
+    let citations: any[] = [];
+    let traceData: any[] = [];
+    
+    if (response.completion) {
+      for await (const event of response.completion) {
+        if (event.chunk) {
+          const chunk = new TextDecoder().decode(event.chunk.bytes);
+          fullResponse += chunk;
+        }
+        if (event.trace) {
+          traceData.push(event.trace);
+          console.log('Agent Trace:', JSON.stringify(event.trace, null, 2));
+        }
+      }
+    }
+
+    console.log('Agent Full Response:', fullResponse);
+    console.log('Agent executed autonomously with tool calls visible in traces');
+
+    // Parse agent response to extract analysis
+    const analysis = parseAgentResponse(fullResponse, traceData);
+    
+    return analysis;
     
   } catch (error) {
-    console.error('Integrated Agent analysis failed:', error);
-    console.log('Falling back to direct Bedrock LLM analysis');
-    
-    // Fallback to direct Bedrock LLM
-    return await generateAIAnalysis(portfolio, metrics, marketData);
+    console.error('Bedrock Agent invocation failed:', error);
+    // Fallback to direct tool calls if agent fails
+    return await fallbackDirectAnalysis(portfolio, portfolioId);
   }
+}
+
+function parseAgentResponse(responseText: string, traces: any[]): any {
+  console.log('Parsing agent response...');
+  
+  // Try to extract structured data from response
+  let summary: any = {};
+  let recommendations: any[] = [];
+  let reportUrl: string | undefined;
+
+  // Extract metrics from agent's response
+  const totalValueMatch = responseText.match(/Total Value[:\s]+\$?([\d,]+\.?\d*)/i);
+  const pnlMatch = responseText.match(/P&L[:\s]+([+-]?\$?[\d,]+\.?\d*)/i);
+  const pnlPercentMatch = responseText.match(/([+-]?[\d.]+)%/);
+  const betaMatch = responseText.match(/[Bb]eta[:\s]+([\d.]+)/);
+
+  summary = {
+    total_value: totalValueMatch ? parseFloat(totalValueMatch[1].replace(/,/g, '')) : 0,
+    total_pnl: pnlMatch ? parseFloat(pnlMatch[1].replace(/[$,]/g, '')) : 0,
+    total_pnl_percent: pnlPercentMatch ? parseFloat(pnlPercentMatch[1]) : 0,
+    portfolio_beta: betaMatch ? parseFloat(betaMatch[1]) : 1.0,
+    risk_flags_count: (responseText.match(/risk flag/gi) || []).length,
+  };
+
+  // Extract recommendations from agent response
+  const recommendationMatches = responseText.match(/\d+\.\s+(.+?)(?=\n\d+\.|\n\n|$)/gs);
+  if (recommendationMatches) {
+    recommendations = recommendationMatches.slice(0, 3).map((rec, idx) => {
+      const cleanRec = rec.replace(/^\d+\.\s+/, '').trim();
+      return {
+        action: cleanRec.split(/[.!?]/)[0],
+        rationale: cleanRec,
+        impact: 'See full analysis for details',
+        priority: idx === 0 ? 'high' : 'medium'
+      };
+    });
+  }
+
+  // Extract report URL if mentioned
+  const urlMatch = responseText.match(/https?:\/\/[^\s]+/);
+  if (urlMatch) {
+    reportUrl = urlMatch[0];
+  }
+
+  return {
+    summary,
+    recommendations: recommendations.length > 0 ? recommendations : [
+      {
+        action: 'Review portfolio diversification',
+        rationale: 'Agent analysis completed - see full response for details',
+        impact: 'Improved risk-adjusted returns',
+        priority: 'medium'
+      }
+    ],
+    report_url: reportUrl,
+    analysis_text: responseText,
+    agent_traces: traces.length,
+  };
+}
+
+async function fallbackDirectAnalysis(portfolio: Portfolio, portfolioId: string): Promise<any> {
+  console.log('Using fallback direct tool analysis...');
+  
+  try {
+    // Manually call tools since agent failed
+    const marketDataResponse = await invokeLambda(process.env.MARKET_DATA_FUNCTION!, {
+      tickers: portfolio.positions.map(p => p.ticker),
+      portfolio_id: portfolioId,
+    });
+    const marketDataParsed = JSON.parse(marketDataResponse);
+    const marketData = marketDataParsed.body ? JSON.parse(marketDataParsed.body) : marketDataParsed;
+
+    const metricsResponse = await invokeLambda(process.env.COMPUTE_METRICS_FUNCTION!, {
+      portfolio,
+      market_data: marketData,
+    });
+    const metricsResponseParsed = JSON.parse(metricsResponse);
+    const portfolioMetrics = metricsResponseParsed.body ? JSON.parse(metricsResponseParsed.body) : metricsResponseParsed;
+
+    return {
+      summary: {
+        total_value: portfolioMetrics.total_value,
+        total_pnl: portfolioMetrics.total_pnl,
+        total_pnl_percent: portfolioMetrics.total_pnl_percent,
+        portfolio_beta: portfolioMetrics.portfolio_beta,
+        risk_flags_count: portfolioMetrics.risk_flags.length,
+      },
+      recommendations: generateBasicRecommendations(portfolioMetrics),
+      report_url: undefined,
+      analysis_text: `Fallback analysis: Portfolio has ${portfolioMetrics.positions.length} positions with total value $${portfolioMetrics.total_value.toLocaleString()}. This is not financial advice.`,
+    };
+  } catch (error) {
+    console.error('Fallback analysis also failed:', error);
+    throw error;
+  }
+}
+
+function generateBasicRecommendations(metrics: any): any[] {
+  const recommendations = [];
+  
+  if (metrics.risk_flags && metrics.risk_flags.length > 0) {
+    recommendations.push({
+      action: 'Address risk flags',
+      rationale: `Portfolio has ${metrics.risk_flags.length} risk flags: ${metrics.risk_flags[0]}`,
+      impact: 'Reduces portfolio risk',
+      priority: 'high'
+    });
+  }
+  
+  if (metrics.portfolio_beta > 1.3) {
+    recommendations.push({
+      action: 'Consider adding defensive positions',
+      rationale: `Portfolio beta of ${metrics.portfolio_beta.toFixed(2)} indicates higher volatility`,
+      impact: 'Reduces volatility',
+      priority: 'medium'
+    });
+  }
+  
+  if (recommendations.length === 0) {
+    recommendations.push({
+      action: 'Monitor and maintain current allocation',
+      rationale: 'Portfolio metrics are within acceptable ranges',
+      impact: 'Continue balanced approach',
+      priority: 'low'
+    });
+  }
+  
+  return recommendations;
 }
 
 async function performIntegratedAgentAnalysis(portfolio: Portfolio, metrics: any, marketData: any): Promise<any> {

@@ -94,9 +94,216 @@ export class FinMateStack extends cdk.Stack {
       timeout: cdk.Duration.minutes(5),
     });
 
-    // Note: Bedrock Agent functionality integrated directly into main app Lambda
+    // ============================================================
+    // BEDROCK AGENT WITH AGENTCORE (TEMPORARILY COMMENTED OUT)
+    // ============================================================
+    // TODO: Deploy agent manually using create-agent-cli.sh to avoid circular dependency
+
+    // Agent IAM Role
+    // const agentRole = new iam.Role(this, 'BedrockAgentRole', {
+    //   assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com'),
+    //   description: 'IAM role for FinMate Bedrock Agent',
+    // });
+
+    // Grant agent access to invoke Lambda
+    // agentRole.addToPolicy(new iam.PolicyStatement({
+    //   effect: iam.Effect.ALLOW,
+    //   actions: ['lambda:InvokeFunction'],
+    //   resources: ['*'], // Will be restricted to specific Lambdas below
+    // }));
+
+    // Tool Orchestrator Lambda (routes agent calls to existing tools)
+    const agentToolsLambda = new lambda.Function(this, 'AgentToolsFunction', {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'agent-tools.handler',
+      code: lambda.Code.fromAsset('lambda'),
+      role: toolLambdaRole,
+      environment: {
+        MARKET_DATA_FUNCTION: marketDataLambda.functionName,
+        COMPUTE_METRICS_FUNCTION: computeMetricsLambda.functionName,
+        WRITE_REPORT_FUNCTION: writeReportLambda.functionName,
+      },
+      timeout: cdk.Duration.minutes(5),
+    });
+
+    // Grant tool orchestrator permission to invoke existing tools
+    marketDataLambda.grantInvoke(agentToolsLambda);
+    computeMetricsLambda.grantInvoke(agentToolsLambda);
+    writeReportLambda.grantInvoke(agentToolsLambda);
+
+    // Grant Bedrock Agent permission to invoke tool orchestrator
+    agentToolsLambda.grantInvoke(new iam.ServicePrincipal('bedrock.amazonaws.com'));
+
+    // OpenAPI Schema for Agent Action Group
+    const actionGroupSchema = {
+      openapi: '3.0.0',
+      info: {
+        title: 'FinMate Portfolio Analysis Tools API',
+        version: '1.0.0',
+        description: 'Tools for portfolio analysis, market data, and reporting',
+      },
+      paths: {
+        '/get_market_data': {
+          post: {
+            summary: 'Fetch real-time market data for tickers',
+            description: 'Retrieves current prices, sectors, and beta values for stock tickers',
+            operationId: 'getMarketData',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      tickers: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Array of stock ticker symbols (e.g., ["AAPL", "MSFT"])',
+                      },
+                      portfolio_id: {
+                        type: 'string',
+                        description: 'Optional portfolio ID for caching',
+                      },
+                    },
+                    required: ['tickers'],
+                  },
+                },
+              },
+            },
+            responses: {
+              '200': {
+                description: 'Market data retrieved successfully',
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        quotes: { type: 'object' },
+                        sectors: { type: 'object' },
+                        betas: { type: 'object' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        '/compute_metrics': {
+          post: {
+            summary: 'Calculate portfolio metrics and risk analysis',
+            description: 'Computes weights, P&L, sector exposure, beta, and risk flags',
+            operationId: 'computeMetrics',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      portfolio: {
+                        type: 'object',
+                        description: 'Portfolio object with positions and settings',
+                      },
+                      market_data: {
+                        type: 'object',
+                        description: 'Market data from get_market_data tool',
+                      },
+                    },
+                    required: ['portfolio', 'market_data'],
+                  },
+                },
+              },
+            },
+            responses: {
+              '200': {
+                description: 'Metrics computed successfully',
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        total_value: { type: 'number' },
+                        total_pnl: { type: 'number' },
+                        portfolio_beta: { type: 'number' },
+                        risk_flags: { type: 'array' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        '/write_report': {
+          post: {
+            summary: 'Generate portfolio analysis report',
+            description: 'Creates HTML/Markdown report and saves to S3',
+            operationId: 'writeReport',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      portfolio_metrics: {
+                        type: 'object',
+                        description: 'Metrics from compute_metrics tool',
+                      },
+                      analysis_summary: {
+                        type: 'string',
+                        description: 'Summary text for report',
+                      },
+                      recommendations: {
+                        type: 'array',
+                        description: 'Array of recommendation objects',
+                      },
+                      user_id: {
+                        type: 'string',
+                        description: 'User ID for report storage',
+                      },
+                    },
+                    required: ['portfolio_metrics'],
+                  },
+                },
+              },
+            },
+            responses: {
+              '200': {
+                description: 'Report generated successfully',
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        report_url: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    // ============================================================
+    // BEDROCK AGENT CREATION (MANUAL DEPLOYMENT)
+    // ============================================================
+    // The Bedrock Agent will be created manually using create-agent-cli.sh
+    // to avoid circular dependency issues in CDK
+    // 
+    // Agent will be created with:
+    // - Agent Name: finmate-portfolio-advisor
+    // - Foundation Model: anthropic.claude-3-sonnet-20240229-v1:0
+    // - Action Group: portfolio-tools (linked to agentToolsLambda)
+    // - Alias: live
 
     // Main Application Lambda
+    // Note: Agent IDs are NOT added as environment variables to avoid circular dependency
+    // Instead, they will be retrieved from CloudFormation exports or passed via API
     const appLambda = new lambda.Function(this, 'FinMateAppFunction', {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'app.handler',
@@ -107,6 +314,8 @@ export class FinMateStack extends cdk.Stack {
         MARKET_DATA_FUNCTION: marketDataLambda.functionName,
         COMPUTE_METRICS_FUNCTION: computeMetricsLambda.functionName,
         WRITE_REPORT_FUNCTION: writeReportLambda.functionName,
+        // BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID will be set manually after deployment
+        // or retrieved from CloudFormation exports: FinMateBedrockAgentId, FinMateBedrockAgentAliasId
       },
       timeout: cdk.Duration.minutes(15),
     });
@@ -174,6 +383,24 @@ export class FinMateStack extends cdk.Stack {
       value: portfolioBucket.bucketName,
       description: 'S3 Bucket for portfolio storage',
     });
+
+    // CloudFormation Outputs for Bedrock Agent (commented out for manual deployment)
+    // new cdk.CfnOutput(this, 'BedrockAgentId', {
+    //   value: bedrockAgent.attrAgentId,
+    //   description: 'Bedrock Agent ID - visible in AWS Console',
+    //   exportName: 'FinMateBedrockAgentId',
+    // });
+
+    // new cdk.CfnOutput(this, 'BedrockAgentAliasId', {
+    //   value: agentAlias.attrAgentAliasId,
+    //   description: 'Bedrock Agent Alias ID',
+    //   exportName: 'FinMateBedrockAgentAliasId',
+    // });
+
+    // new cdk.CfnOutput(this, 'BedrockAgentArn', {
+    //   value: bedrockAgent.attrAgentArn,
+    //   description: 'Bedrock Agent ARN',
+    // });
 
     // Web Hosting Infrastructure
     // S3 Bucket for web hosting

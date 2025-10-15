@@ -1,0 +1,78 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "FinMate Portfolio Tools",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/get_market_data": {
+      "post": {
+        "summary": "Get market data",
+        "operationId": "getMarketData",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tickers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": ["tickers"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/compute_metrics": {
+      "post": {
+        "summary": "Compute metrics",
+        "operationId": "computeMetrics",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "portfolio": {
+                    "type": "object"
+                  },
+                  "market_data": {
+                    "type": "object"
+                  }
+                },
+                "required": ["portfolio", "market_data"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/write_report": {
+      "post": {
+        "summary": "Write report",
+        "operationId": "writeReport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "portfolio_metrics": {
+                    "type": "object"
+                  }
+                },
+                "required": ["portfolio_metrics"]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

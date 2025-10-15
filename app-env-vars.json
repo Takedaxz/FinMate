@@ -1,0 +1,10 @@
+{
+  "Variables": {
+    "BUCKET_NAME": "finmate-portfolios-417447013956-ap-southeast-1",
+    "MARKET_DATA_FUNCTION": "FinMateStack-MarketDataFunction4B3C2D7B-gUvUPqtj6Ooh",
+    "COMPUTE_METRICS_FUNCTION": "FinMateStack-ComputeMetricsFunctionBE918CD8-r1DwgZbPhIhJ",
+    "WRITE_REPORT_FUNCTION": "FinMateStack-WriteReportFunction33ED66A6-9MzUUAlDNfQO",
+    "BEDROCK_AGENT_ID": "DNITTMEO3S",
+    "BEDROCK_AGENT_ALIAS_ID": "PVH276Z27Q"
+  }
+}

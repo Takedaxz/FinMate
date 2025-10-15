@@ -1,0 +1,14 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Portfolio Tools",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/get_market_data": {
+      "post": {
+        "operationId": "getMarketData"
+      }
+    }
+  }
+}

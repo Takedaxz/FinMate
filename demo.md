@@ -4,6 +4,8 @@
 
 This demo showcases FinMate's core capabilities as an autonomous AI portfolio advisor built for the AWS AI Agent Global Hackathon.
 
+**Highlight**: Features a **real Bedrock Agent** resource (viewable in AWS Console) that autonomously orchestrates portfolio analysis tools using AgentCore primitives.
+
 ## 🚀 Demo Flow
 
 ### 1. Portfolio Upload (30 seconds)
@@ -74,11 +76,14 @@ The AI has identified several risk flags and is suggesting diversification strat
 
 ### Technical Highlights (15 seconds)
 "FinMate demonstrates all hackathon requirements:
-- LLM hosted on AWS Bedrock
-- Bedrock AgentCore for tool orchestration
-- Autonomous capabilities with EventBridge scheduling
-- External API integration for market data
-- Serverless architecture with Lambda and S3"
+- **Real Bedrock Agent**: Visible in AWS Console (Agent ID in outputs)
+- **AgentCore Primitives**: Agent autonomously calls tools (check traces in CloudWatch)
+- **Reasoning LLM**: Claude 3 Sonnet makes all decisions
+- **Autonomous Operation**: EventBridge + agent tool orchestration
+- **External Integrations**: Alpha Vantage API, S3, Lambda tools
+- **Serverless Architecture**: Complete AWS-native stack
+
+**To verify**: Go to AWS Console → Bedrock → Agents → finmate-portfolio-advisor"
 
 ## 🔧 Demo Setup
 

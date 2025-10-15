@@ -25,3 +25,7 @@ Thumbs.db
 .env
 
 lambda-layer/python/*
+
+*.md
+prompt.txt
+*.sh

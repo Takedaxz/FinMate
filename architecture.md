@@ -2,6 +2,8 @@
 
 ## System Overview
 
+**Key Update**: FinMate now uses a **real AWS Bedrock Agent** resource that autonomously orchestrates tool calls via AgentCore primitives. The agent is visible in AWS Console under Bedrock → Agents.
+
 ```mermaid
 graph TB
     subgraph "Client Layer"
