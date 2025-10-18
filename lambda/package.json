@@ -6,8 +6,10 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-agent-runtime": "^3.906.0",
     "@aws-sdk/client-bedrock-runtime": "^3.901.0",
+    "@aws-sdk/client-dynamodb": "^3.913.0",
     "@aws-sdk/client-lambda": "^3.490.0",
     "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/lib-dynamodb": "^3.913.0",
     "@aws-sdk/s3-request-presigner": "^3.678.0",
     "axios": "^1.6.0",
     "csv-parser": "^3.0.0",

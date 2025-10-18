@@ -8,6 +8,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
 
 export class FinMateStack extends cdk.Stack {
@@ -21,6 +22,15 @@ export class FinMateStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // DynamoDB Table for analysis job tracking
+    const analysisJobsTable = new dynamodb.Table(this, 'AnalysisJobsTable', {
+      tableName: `finmate-analysis-jobs-${this.account}-${this.region}`,
+      partitionKey: { name: 'job_id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      timeToLiveAttribute: 'ttl', // Auto-delete old jobs after 7 days
     });
 
     // Lambda execution role for tool functions
@@ -57,11 +67,19 @@ export class FinMateStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Market Data Tool Lambda (Python with Yahoo Finance API - no dependencies)
+    // Python Dependencies Layer for Market Data
+    const marketDataLayer = new lambda.LayerVersion(this, 'MarketDataLayer', {
+      code: lambda.Code.fromAsset('lambda-layer'),
+      compatibleRuntimes: [lambda.Runtime.PYTHON_3_11],
+      description: 'Python dependencies for market data Lambda (yfinance, pandas, numpy, etc.)',
+    });
+
+    // Market Data Tool Lambda (Python with Yahoo Finance API)
     const marketDataLambda = new lambda.Function(this, 'MarketDataFunction', {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'market-data-python.handler',
-      code: lambda.Code.fromAsset('lambda/python'),
+      code: lambda.Code.fromAsset('lambda'),
+      layers: [marketDataLayer],
       role: toolLambdaRole,
       environment: {
         BUCKET_NAME: portfolioBucket.bucketName,
@@ -311,6 +329,7 @@ export class FinMateStack extends cdk.Stack {
       role: appLambdaRole,
       environment: {
         BUCKET_NAME: portfolioBucket.bucketName,
+        ANALYSIS_JOBS_TABLE: analysisJobsTable.tableName,
         MARKET_DATA_FUNCTION: marketDataLambda.functionName,
         COMPUTE_METRICS_FUNCTION: computeMetricsLambda.functionName,
         WRITE_REPORT_FUNCTION: writeReportLambda.functionName,
@@ -324,6 +343,9 @@ export class FinMateStack extends cdk.Stack {
     marketDataLambda.grantInvoke(appLambda);
     computeMetricsLambda.grantInvoke(appLambda);
     writeReportLambda.grantInvoke(appLambda);
+    
+    // Grant DynamoDB access
+    analysisJobsTable.grantReadWriteData(appLambda);
 
     // API Gateway
     const api = new apigateway.RestApi(this, 'FinMateApi', {
@@ -336,6 +358,28 @@ export class FinMateStack extends cdk.Stack {
       },
     });
 
+    // Add CORS headers to Gateway Responses (for timeouts and errors)
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': "'*'",
+      'Access-Control-Allow-Headers': "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'",
+      'Access-Control-Allow-Methods': "'GET,POST,OPTIONS'",
+    };
+
+    api.addGatewayResponse('Default4XX', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: corsHeaders,
+    });
+
+    api.addGatewayResponse('Default5XX', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: corsHeaders,
+    });
+
+    api.addGatewayResponse('Timeout', {
+      type: apigateway.ResponseType.INTEGRATION_TIMEOUT,
+      responseHeaders: corsHeaders,
+    });
+
     // API Gateway Integration
     const appIntegration = new apigateway.LambdaIntegration(appLambda);
 
@@ -345,7 +389,10 @@ export class FinMateStack extends cdk.Stack {
     portfolio.addMethod('GET', appIntegration);  // Get portfolio
 
     const analyze = portfolio.addResource('analyze');
-    analyze.addMethod('POST', appIntegration);
+    analyze.addMethod('POST', appIntegration); // Start analysis (async)
+    
+    const analyzeStatus = analyze.addResource('{job_id}');
+    analyzeStatus.addMethod('GET', appIntegration); // Check analysis status
 
     const report = api.root.addResource('report');
     report.addMethod('GET', appIntegration);

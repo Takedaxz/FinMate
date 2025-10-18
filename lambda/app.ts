@@ -1,16 +1,20 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+import { LambdaClient, InvokeCommand, InvocationType } from '@aws-sdk/client-lambda';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockAgentRuntimeClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agent-runtime';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 import * as csv from 'csv-parser';
 import { Readable } from 'stream';
+import { getBedrockRateLimiter, retryWithBackoff } from './rate-limiter';
 
 const s3Client = new S3Client({});
 const lambdaClient = new LambdaClient({});
 const bedrockClient = new BedrockRuntimeClient({});
 const bedrockAgentClient = new BedrockAgentRuntimeClient({});
+const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 // Helper function to add CORS headers
 const corsHeaders = {
@@ -41,9 +45,23 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   console.log('FinMate App Lambda Event:', JSON.stringify(event, null, 2));
 
   try {
+    // Check if this is an async invocation for background analysis
+    if ((event as any).action === 'run_analysis') {
+      return await handlePortfolioAnalysis(event as any);
+    }
+
     const httpMethod = event.httpMethod;
     const path = event.path;
     const body = event.body ? JSON.parse(event.body) : {};
+
+    // Handle CORS preflight requests
+    if (httpMethod === 'OPTIONS') {
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: '',
+      };
+    }
 
     // Handle different API endpoints
     if (httpMethod === 'POST' && path === '/portfolio') {
@@ -51,7 +69,10 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     } else if (httpMethod === 'GET' && path === '/portfolio') {
       return await handleGetPortfolio(event);
     } else if (httpMethod === 'POST' && path === '/portfolio/analyze') {
-      return await handlePortfolioAnalysis(body);
+      return await handlePortfolioAnalysisAsync(body);
+    } else if (httpMethod === 'GET' && path.startsWith('/portfolio/analyze/')) {
+      const jobId = event.pathParameters?.job_id || path.split('/').pop();
+      return await handleGetAnalysisStatus(jobId!);
     } else if (httpMethod === 'GET' && path === '/report') {
       return await handleGetReport(event);
     } else if (httpMethod === 'POST' && path === '/simulate/rebalance') {
@@ -156,12 +177,113 @@ async function handleGetPortfolio(event: APIGatewayProxyEvent): Promise<APIGatew
   }
 }
 
-async function handlePortfolioAnalysis(body: any): Promise<APIGatewayProxyResult> {
+// New async handler - returns immediately with job_id
+async function handlePortfolioAnalysisAsync(body: any): Promise<APIGatewayProxyResult> {
   try {
     const { portfolio_id, risk_prefs } = body;
     if (!portfolio_id) {
       throw new Error('Portfolio ID is required');
     }
+
+    // Generate job ID
+    const jobId = uuidv4();
+    
+    // Store initial job status in DynamoDB
+    await dynamoClient.send(new PutCommand({
+      TableName: process.env.ANALYSIS_JOBS_TABLE!,
+      Item: {
+        job_id: jobId,
+        portfolio_id,
+        status: 'processing',
+        created_at: new Date().toISOString(),
+        ttl: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60), // 7 days TTL
+      },
+    }));
+
+    // Invoke Lambda asynchronously to run analysis in background
+    await lambdaClient.send(new InvokeCommand({
+      FunctionName: process.env.AWS_LAMBDA_FUNCTION_NAME!,
+      InvocationType: InvocationType.Event, // Async invocation
+      Payload: JSON.stringify({
+        action: 'run_analysis',
+        job_id: jobId,
+        portfolio_id,
+        risk_prefs,
+      }),
+    }));
+
+    return {
+      statusCode: 202, // Accepted
+      headers: corsHeaders,
+      body: JSON.stringify({
+        job_id: jobId,
+        status: 'processing',
+        message: 'Analysis started. Use the job_id to check status.',
+      }),
+    };
+  } catch (error) {
+    console.error('Error starting portfolio analysis:', error);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        error: 'Failed to start analysis',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      }),
+    };
+  }
+}
+
+// Check analysis job status
+async function handleGetAnalysisStatus(jobId: string): Promise<APIGatewayProxyResult> {
+  try {
+    const result = await dynamoClient.send(new GetCommand({
+      TableName: process.env.ANALYSIS_JOBS_TABLE!,
+      Key: { job_id: jobId },
+    }));
+
+    if (!result.Item) {
+      return {
+        statusCode: 404,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: 'Job not found' }),
+      };
+    }
+
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify(result.Item),
+    };
+  } catch (error) {
+    console.error('Error getting analysis status:', error);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        error: 'Failed to get status',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      }),
+    };
+  }
+}
+
+// Background analysis runner (called asynchronously)
+async function handlePortfolioAnalysis(body: any): Promise<APIGatewayProxyResult> {
+  const { job_id, portfolio_id, risk_prefs } = body;
+  
+  try {
+    // Update status to running
+    await dynamoClient.send(new UpdateCommand({
+      TableName: process.env.ANALYSIS_JOBS_TABLE!,
+      Key: { job_id },
+      UpdateExpression: 'SET #status = :status, started_at = :started',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':status': 'running',
+        ':started': new Date().toISOString(),
+      },
+    }));
 
     // Get portfolio
     const portfolio = await getPortfolio(portfolio_id);
@@ -176,23 +298,43 @@ async function handlePortfolioAnalysis(body: any): Promise<APIGatewayProxyResult
     console.log('Invoking Bedrock Agent for autonomous portfolio analysis...');
     const analysis = await invokeBedrockAgent(portfolio, portfolio_id);
 
+    // Update status to completed with results
+    await dynamoClient.send(new UpdateCommand({
+      TableName: process.env.ANALYSIS_JOBS_TABLE!,
+      Key: { job_id },
+      UpdateExpression: 'SET #status = :status, completed_at = :completed, summary = :summary, suggestions = :suggestions, report_url = :report, analysis_summary = :analysis',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':status': 'completed',
+        ':completed': new Date().toISOString(),
+        ':summary': analysis.summary || 'Analysis completed',
+        ':suggestions': analysis.recommendations || [],
+        ':report': analysis.report_url || '',
+        ':analysis': analysis.analysis_text || '',
+      },
+    }));
+
     return {
       statusCode: 200,
       headers: corsHeaders,
-      body: JSON.stringify({
-        summary: analysis.summary,
-        suggestions: analysis.recommendations,
-        report_url: analysis.report_url,
-        analysis_summary: analysis.analysis_text,
-        agent_metadata: {
-          agent_id: process.env.BEDROCK_AGENT_ID,
-          agent_alias: process.env.BEDROCK_AGENT_ALIAS_ID,
-          used_agentcore: true,
-        },
-      }),
+      body: JSON.stringify({ success: true }),
     };
   } catch (error) {
     console.error('Error analyzing portfolio:', error);
+    
+    // Update status to failed
+    await dynamoClient.send(new UpdateCommand({
+      TableName: process.env.ANALYSIS_JOBS_TABLE!,
+      Key: { job_id },
+      UpdateExpression: 'SET #status = :status, error_message = :error, failed_at = :failed',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: {
+        ':status': 'failed',
+        ':error': error instanceof Error ? error.message : 'Unknown error',
+        ':failed': new Date().toISOString(),
+      },
+    }));
+
     return {
       statusCode: 500,
       headers: corsHeaders,
@@ -345,14 +487,27 @@ Focus on diversification, risk management, and optimization opportunities based 
     console.log('Agent ID:', agentId);
     console.log('Agent Alias:', agentAliasId);
 
+    // Get rate limiter and check/wait if needed
+    const rateLimiter = getBedrockRateLimiter();
+    const stats = rateLimiter.getStats();
+    console.log('Bedrock Rate Limiter Stats:', JSON.stringify(stats));
+    
+    // Wait if we're at quota
+    await rateLimiter.checkAndWait();
+
     const command = new InvokeAgentCommand({
       agentId: agentId,
       agentAliasId: agentAliasId,
-      sessionId: 'finmate-session', // Use static session ID
+      sessionId: `session-${portfolioId}-${Date.now()}`, // Unique session per analysis
       inputText: agentInput,
     });
 
-    const response = await bedrockAgentClient.send(command);
+    // Invoke with retry logic for throttling
+    const response = await retryWithBackoff(
+      () => bedrockAgentClient.send(command),
+      3, // max retries
+      2000 // base delay 2s
+    );
     
     // Parse streaming response
     let fullResponse = '';

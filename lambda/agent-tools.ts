@@ -131,20 +131,25 @@ async function handleGetMarketData(parameters?: Array<any>, requestBody?: any): 
         if (Array.isArray(tickersParam.value)) {
           tickers = tickersParam.value;
         } else if (typeof tickersParam.value === 'string') {
-          // Try to parse as JSON first, then handle string format
+          const value = tickersParam.value.trim();
+          
+          // Try to parse as JSON first
           try {
-            const parsed = JSON.parse(tickersParam.value);
-            if (Array.isArray(parsed)) {
-              // Clean up any string elements that might have brackets
-              tickers = parsed.map(ticker => 
-                typeof ticker === 'string' ? ticker.replace(/[\[\]]/g, '') : ticker
-              );
-            } else {
-              tickers = [parsed.toString().replace(/[\[\]]/g, '')];
-            }
+            tickers = JSON.parse(value);
           } catch {
-            // If JSON parse fails, clean the string and use as single ticker
-            tickers = [tickersParam.value.replace(/[\[\]]/g, '')];
+            // If JSON parse fails, check if it's array-like format: [AAPL] or [AAPL,MSFT]
+            if (value.startsWith('[') && value.endsWith(']')) {
+              const inner = value.slice(1, -1).trim();
+              if (inner) {
+                // Split by comma and clean up
+                tickers = inner.split(',').map(t => t.trim()).filter(t => t.length > 0);
+              } else {
+                tickers = [];
+              }
+            } else {
+              // Treat as single ticker
+              tickers = [value];
+            }
           }
         }
       } catch (error) {
@@ -167,19 +172,24 @@ async function handleGetMarketData(parameters?: Array<any>, requestBody?: any): 
           if (Array.isArray(tickersProp.value)) {
             tickers = tickersProp.value;
           } else if (typeof tickersProp.value === 'string') {
+            const value = tickersProp.value.trim();
+            
             try {
-              const parsed = JSON.parse(tickersProp.value);
-              if (Array.isArray(parsed)) {
-                // Clean up any string elements that might have brackets
-                tickers = parsed.map(ticker => 
-                  typeof ticker === 'string' ? ticker.replace(/[\[\]]/g, '') : ticker
-                );
-              } else {
-                tickers = [parsed.toString().replace(/[\[\]]/g, '')];
-              }
+              tickers = JSON.parse(value);
             } catch {
-              // If JSON parse fails, clean the string and use as single ticker
-              tickers = [tickersProp.value.replace(/[\[\]]/g, '')];
+              // If JSON parse fails, check if it's array-like format: [AAPL] or [AAPL,MSFT]
+              if (value.startsWith('[') && value.endsWith(']')) {
+                const inner = value.slice(1, -1).trim();
+                if (inner) {
+                  // Split by comma and clean up
+                  tickers = inner.split(',').map(t => t.trim()).filter(t => t.length > 0);
+                } else {
+                  tickers = [];
+                }
+              } else {
+                // Treat as single ticker
+                tickers = [value];
+              }
             }
           }
         } catch (error) {
@@ -209,8 +219,32 @@ async function handleComputeMetrics(parameters?: Array<any>, requestBody?: any):
   let marketData: any;
 
   if (requestBody?.content) {
-    portfolio = requestBody.content.portfolio;
-    marketData = requestBody.content.market_data;
+    // Handle requestBody.content structure from agent
+    if (requestBody.content['application/json']?.properties) {
+      const properties = requestBody.content['application/json'].properties;
+      const portfolioProp = properties.find((p: any) => p.name === 'portfolio');
+      const marketDataProp = properties.find((p: any) => p.name === 'market_data');
+      
+      if (portfolioProp?.value) {
+        try {
+          portfolio = typeof portfolioProp.value === 'string' ? JSON.parse(portfolioProp.value) : portfolioProp.value;
+        } catch (error) {
+          console.error('Error parsing portfolio:', error);
+        }
+      }
+      
+      if (marketDataProp?.value) {
+        try {
+          marketData = typeof marketDataProp.value === 'string' ? JSON.parse(marketDataProp.value) : marketDataProp.value;
+        } catch (error) {
+          console.error('Error parsing market_data:', error);
+        }
+      }
+    } else {
+      // Fallback to direct content access
+      portfolio = requestBody.content.portfolio;
+      marketData = requestBody.content.market_data;
+    }
   }
 
   if (!portfolio || !marketData) {
@@ -235,10 +269,44 @@ async function handleWriteReport(parameters?: Array<any>, requestBody?: any): Pr
   let userId: string = 'demo-user';
 
   if (requestBody?.content) {
-    portfolioMetrics = requestBody.content.portfolio_metrics;
-    analysisSummary = requestBody.content.analysis_summary;
-    recommendations = requestBody.content.recommendations;
-    userId = requestBody.content.user_id || 'demo-user';
+    // Handle requestBody.content structure from agent
+    if (requestBody.content['application/json']?.properties) {
+      const properties = requestBody.content['application/json'].properties;
+      const metricsProp = properties.find((p: any) => p.name === 'portfolio_metrics');
+      const summaryProp = properties.find((p: any) => p.name === 'analysis_summary');
+      const recsProp = properties.find((p: any) => p.name === 'recommendations');
+      const userIdProp = properties.find((p: any) => p.name === 'user_id');
+      
+      if (metricsProp?.value) {
+        try {
+          portfolioMetrics = typeof metricsProp.value === 'string' ? JSON.parse(metricsProp.value) : metricsProp.value;
+        } catch (error) {
+          console.error('Error parsing portfolio_metrics:', error);
+        }
+      }
+      
+      if (summaryProp?.value) {
+        analysisSummary = summaryProp.value;
+      }
+      
+      if (recsProp?.value) {
+        try {
+          recommendations = typeof recsProp.value === 'string' ? JSON.parse(recsProp.value) : recsProp.value;
+        } catch (error) {
+          console.error('Error parsing recommendations:', error);
+        }
+      }
+      
+      if (userIdProp?.value) {
+        userId = userIdProp.value;
+      }
+    } else {
+      // Fallback to direct content access
+      portfolioMetrics = requestBody.content.portfolio_metrics;
+      analysisSummary = requestBody.content.analysis_summary;
+      recommendations = requestBody.content.recommendations;
+      userId = requestBody.content.user_id || 'demo-user';
+    }
   }
 
   if (!portfolioMetrics) {
