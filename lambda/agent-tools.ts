@@ -2,6 +2,149 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 
 const lambdaClient = new LambdaClient({});
 
+/**
+ * Parse Java-style object notation to JavaScript object
+ * Example: "{AAPL={shares=15, cost_basis=150}}" -> {AAPL: {shares: 15, cost_basis: 150}}
+ */
+function parseJavaStyleObject(str: string): any {
+  console.log('Parsing Java-style object:', str);
+  
+  // Remove outer braces
+  str = str.trim();
+  if (str.startsWith('{') && str.endsWith('}')) {
+    str = str.slice(1, -1);
+  }
+  
+  const result: any = {};
+  let i = 0;
+  
+  while (i < str.length) {
+    // Skip whitespace
+    while (i < str.length && /\s/.test(str[i])) i++;
+    if (i >= str.length) break;
+    
+    // Find key (until =)
+    let keyStart = i;
+    while (i < str.length && str[i] !== '=') i++;
+    const key = str.slice(keyStart, i).trim();
+    
+    // Skip =
+    i++;
+    while (i < str.length && /\s/.test(str[i])) i++;
+    if (i >= str.length) break;
+    
+    // Check if value is an array
+    if (str[i] === '[') {
+      // Find matching closing bracket
+      let bracketCount = 0;
+      let valueStart = i;
+      while (i < str.length) {
+        if (str[i] === '[') bracketCount++;
+        else if (str[i] === ']') bracketCount--;
+        i++;
+        if (bracketCount === 0) break;
+      }
+      
+      const valueStr = str.slice(valueStart, i);
+      result[key] = parseJavaStyleArray(valueStr);
+    } else if (str[i] === '{') {
+      // Find matching closing brace
+      let braceCount = 0;
+      let valueStart = i;
+      while (i < str.length) {
+        if (str[i] === '{') braceCount++;
+        else if (str[i] === '}') braceCount--;
+        i++;
+        if (braceCount === 0) break;
+      }
+      
+      const valueStr = str.slice(valueStart, i);
+      result[key] = parseJavaStyleObject(valueStr);
+    } else {
+      // Simple value - find until comma or end
+      let valueStart = i;
+      while (i < str.length && str[i] !== ',') i++;
+      const valueStr = str.slice(valueStart, i).trim();
+      
+      if (valueStr === '') {
+        result[key] = null;
+      } else if (!isNaN(Number(valueStr))) {
+        result[key] = Number(valueStr);
+      } else {
+        result[key] = valueStr;
+      }
+    }
+    
+    // Skip comma
+    while (i < str.length && (str[i] === ',' || /\s/.test(str[i]))) i++;
+  }
+  
+  console.log('Parsed result:', result);
+  return result;
+}
+
+/**
+ * Parse Java-style array notation to JavaScript array
+ * Example: "[{shares=15, cost_basis=150, ticker=AAPL}]" -> [{shares: 15, cost_basis: 150, ticker: "AAPL"}]
+ */
+function parseJavaStyleArray(str: string): any[] {
+  console.log('Parsing Java-style array:', str);
+  
+  // Remove outer brackets
+  str = str.trim();
+  if (str.startsWith('[') && str.endsWith(']')) {
+    str = str.slice(1, -1);
+  }
+  
+  if (str.trim() === '') {
+    return [];
+  }
+  
+  const result: any[] = [];
+  let i = 0;
+  
+  while (i < str.length) {
+    // Skip whitespace
+    while (i < str.length && /\s/.test(str[i])) i++;
+    if (i >= str.length) break;
+    
+    // Check if element is an object
+    if (str[i] === '{') {
+      // Find matching closing brace
+      let braceCount = 0;
+      let valueStart = i;
+      while (i < str.length) {
+        if (str[i] === '{') braceCount++;
+        else if (str[i] === '}') braceCount--;
+        i++;
+        if (braceCount === 0) break;
+      }
+      
+      const valueStr = str.slice(valueStart, i);
+      result.push(parseJavaStyleObject(valueStr));
+    } else {
+      // Simple value - find until comma or end
+      let valueStart = i;
+      while (i < str.length && str[i] !== ',') i++;
+      const valueStr = str.slice(valueStart, i).trim();
+      
+      if (valueStr === '') {
+        result.push(null);
+      } else if (!isNaN(Number(valueStr))) {
+        result.push(Number(valueStr));
+      } else {
+        result.push(valueStr);
+      }
+    }
+    
+    // Skip comma
+    while (i < str.length && (str[i] === ',' || /\s/.test(str[i]))) i++;
+  }
+  
+  console.log('Parsed array result:', result);
+  return result;
+}
+
 // Bedrock Agent action group request format
 interface AgentActionRequest {
   messageVersion: string;
@@ -214,12 +357,14 @@ async function handleGetMarketData(parameters?: Array<any>, requestBody?: any): 
 
 async function handleComputeMetrics(parameters?: Array<any>, requestBody?: any): Promise<any> {
   console.log('Handling compute_metrics with parameters:', parameters);
+  console.log('Request body structure:', JSON.stringify(requestBody, null, 2));
   
   let portfolio: any;
   let marketData: any;
 
+  // Try multiple parsing strategies
   if (requestBody?.content) {
-    // Handle requestBody.content structure from agent
+    // Strategy 1: Handle requestBody.content structure from agent
     if (requestBody.content['application/json']?.properties) {
       const properties = requestBody.content['application/json'].properties;
       const portfolioProp = properties.find((p: any) => p.name === 'portfolio');
@@ -227,27 +372,77 @@ async function handleComputeMetrics(parameters?: Array<any>, requestBody?: any):
       
       if (portfolioProp?.value) {
         try {
-          portfolio = typeof portfolioProp.value === 'string' ? JSON.parse(portfolioProp.value) : portfolioProp.value;
+          if (typeof portfolioProp.value === 'string') {
+            // Try JSON parse first
+            try {
+              portfolio = JSON.parse(portfolioProp.value);
+            } catch {
+              // If JSON fails, try parsing Java-style object notation
+              portfolio = parseJavaStyleObject(portfolioProp.value);
+            }
+          } else {
+            portfolio = portfolioProp.value;
+          }
+          console.log('Parsed portfolio from properties:', typeof portfolio);
         } catch (error) {
-          console.error('Error parsing portfolio:', error);
+          console.error('Error parsing portfolio from properties:', error);
+          console.log('Raw portfolio value:', portfolioProp.value);
         }
       }
       
       if (marketDataProp?.value) {
         try {
-          marketData = typeof marketDataProp.value === 'string' ? JSON.parse(marketDataProp.value) : marketDataProp.value;
+          if (typeof marketDataProp.value === 'string') {
+            // Try JSON parse first
+            try {
+              marketData = JSON.parse(marketDataProp.value);
+            } catch {
+              // If JSON fails, try parsing Java-style object notation
+              marketData = parseJavaStyleObject(marketDataProp.value);
+            }
+          } else {
+            marketData = marketDataProp.value;
+          }
+          console.log('Parsed market_data from properties:', typeof marketData);
         } catch (error) {
-          console.error('Error parsing market_data:', error);
+          console.error('Error parsing market_data from properties:', error);
+          console.log('Raw market_data value:', marketDataProp.value);
         }
       }
     } else {
-      // Fallback to direct content access
+      // Strategy 2: Direct content access
       portfolio = requestBody.content.portfolio;
       marketData = requestBody.content.market_data;
+      console.log('Direct content access - portfolio:', typeof portfolio, 'market_data:', typeof marketData);
+    }
+  }
+
+  // Strategy 3: Check if data is in parameters
+  if ((!portfolio || !marketData) && parameters && parameters.length > 0) {
+    console.log('Checking parameters for data...');
+    for (const param of parameters) {
+      if (param.name === 'portfolio' && param.value) {
+        try {
+          portfolio = typeof param.value === 'string' ? JSON.parse(param.value) : param.value;
+          console.log('Found portfolio in parameters');
+        } catch (error) {
+          console.error('Error parsing portfolio from parameters:', error);
+        }
+      }
+      if (param.name === 'market_data' && param.value) {
+        try {
+          marketData = typeof param.value === 'string' ? JSON.parse(param.value) : param.value;
+          console.log('Found market_data in parameters');
+        } catch (error) {
+          console.error('Error parsing market_data from parameters:', error);
+        }
+      }
     }
   }
 
   if (!portfolio || !marketData) {
+    console.error('Missing required parameters - portfolio:', !!portfolio, 'market_data:', !!marketData);
+    console.log('Available data:', { requestBody, parameters });
     throw new Error('Missing required parameters: portfolio and market_data');
   }
 
@@ -279,7 +474,17 @@ async function handleWriteReport(parameters?: Array<any>, requestBody?: any): Pr
       
       if (metricsProp?.value) {
         try {
-          portfolioMetrics = typeof metricsProp.value === 'string' ? JSON.parse(metricsProp.value) : metricsProp.value;
+          if (typeof metricsProp.value === 'string') {
+            // Try JSON parse first
+            try {
+              portfolioMetrics = JSON.parse(metricsProp.value);
+            } catch {
+              // If JSON fails, try parsing Java-style object notation
+              portfolioMetrics = parseJavaStyleObject(metricsProp.value);
+            }
+          } else {
+            portfolioMetrics = metricsProp.value;
+          }
         } catch (error) {
           console.error('Error parsing portfolio_metrics:', error);
         }
@@ -291,7 +496,17 @@ async function handleWriteReport(parameters?: Array<any>, requestBody?: any): Pr
       
       if (recsProp?.value) {
         try {
-          recommendations = typeof recsProp.value === 'string' ? JSON.parse(recsProp.value) : recsProp.value;
+          if (typeof recsProp.value === 'string') {
+            // Try JSON parse first
+            try {
+              recommendations = JSON.parse(recsProp.value);
+            } catch {
+              // If JSON fails, try parsing Java-style array notation
+              recommendations = parseJavaStyleArray(recsProp.value);
+            }
+          } else {
+            recommendations = recsProp.value;
+          }
         } catch (error) {
           console.error('Error parsing recommendations:', error);
         }
@@ -313,16 +528,82 @@ async function handleWriteReport(parameters?: Array<any>, requestBody?: any): Pr
     throw new Error('Missing required parameter: portfolio_metrics');
   }
 
+  // Generate a comprehensive analysis summary if not provided
+  const comprehensiveAnalysis = analysisSummary || generateComprehensiveAnalysis(portfolioMetrics);
+  
   // Invoke write report Lambda
   const response = await invokeLambda(process.env.WRITE_REPORT_FUNCTION!, {
     portfolio_metrics: portfolioMetrics,
-    analysis_summary: analysisSummary || 'Portfolio analysis completed',
+    analysis_summary: comprehensiveAnalysis,
     recommendations: recommendations || [],
     user_id: userId,
     generated_at: new Date().toISOString()
   });
 
   return response;
+}
+
+function generateComprehensiveAnalysis(portfolioMetrics: any): string {
+  const totalValue = portfolioMetrics.total_value || 0;
+  const totalPnl = portfolioMetrics.total_pnl || 0;
+  const totalPnlPercent = portfolioMetrics.total_pnl_percent || 0;
+  const portfolioBeta = portfolioMetrics.portfolio_beta || 1.0;
+  const riskFlags = portfolioMetrics.risk_flags || [];
+  const positions = portfolioMetrics.positions || [];
+  const sectorExposure = portfolioMetrics.sector_exposure || {};
+  
+  let analysis = `## Portfolio Performance Analysis\n\n`;
+  
+  // Performance Summary
+  analysis += `**Portfolio Performance:**\n`;
+  analysis += `- Total Portfolio Value: $${totalValue.toLocaleString()}\n`;
+  analysis += `- Total P&L: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toLocaleString()} (${totalPnlPercent >= 0 ? '+' : ''}${totalPnlPercent.toFixed(2)}%)\n`;
+  analysis += `- Portfolio Beta: ${portfolioBeta.toFixed(2)}\n\n`;
+  
+  // Risk Assessment
+  if (riskFlags.length > 0) {
+    analysis += `**Risk Assessment:**\n`;
+    riskFlags.forEach((flag: string) => {
+      analysis += `- ⚠️ ${flag}\n`;
+    });
+    analysis += `\n`;
+  }
+  
+  // Sector Analysis
+  if (Object.keys(sectorExposure).length > 0) {
+    analysis += `**Sector Diversification:**\n`;
+    Object.entries(sectorExposure).forEach(([sector, exposure]) => {
+      analysis += `- ${sector}: ${(exposure as number).toFixed(1)}%\n`;
+    });
+    analysis += `\n`;
+  }
+  
+  // Position Analysis
+  if (positions.length > 0) {
+    analysis += `**Top Holdings Analysis:**\n`;
+    positions.slice(0, 5).forEach((pos: any) => {
+      analysis += `- **${pos.ticker}**: ${pos.weight?.toFixed(1) || 'N/A'}% weight, ${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent?.toFixed(2) || 'N/A'}% return\n`;
+    });
+    analysis += `\n`;
+  }
+  
+  // Recommendations
+  analysis += `**Key Recommendations:**\n`;
+  if (riskFlags.length > 0) {
+    analysis += `- **Diversification**: Consider reducing concentration risk by diversifying across more positions and sectors\n`;
+  }
+  if (portfolioBeta > 1.2) {
+    analysis += `- **Risk Management**: Portfolio beta of ${portfolioBeta.toFixed(2)} indicates higher volatility; consider adding lower-beta assets\n`;
+  }
+  if (totalPnlPercent > 20) {
+    analysis += `- **Profit Taking**: Strong performance of ${totalPnlPercent.toFixed(2)}% may warrant considering partial profit-taking\n`;
+  } else if (totalPnlPercent < -10) {
+    analysis += `- **Loss Management**: Consider reviewing underperforming positions and potential rebalancing\n`;
+  }
+  
+  analysis += `\n*This analysis is based on current market data and portfolio metrics. Please consult with a financial advisor for personalized investment advice.*`;
+  
+  return analysis;
 }
 
 async function invokeLambda(functionName: string, payload: any): Promise<any> {

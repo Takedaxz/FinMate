@@ -85,8 +85,29 @@ export const handler = async (event: any) => {
 };
 
 function computePortfolioMetrics(portfolio: any, marketData: MarketData): PortfolioMetrics {
-  const positions = portfolio.positions;
-  const riskSettings = portfolio.settings;
+  // Handle different portfolio formats
+  let positions: any[] = [];
+  
+  if (portfolio.positions && Array.isArray(portfolio.positions)) {
+    // Standard format: {positions: [{ticker: "AAPL", units: 15, cost_basis: 150}]}
+    positions = portfolio.positions;
+  } else {
+    // Agent format: {AAPL: {shares: 15, cost_basis: 150}}
+    positions = Object.entries(portfolio)
+      .filter(([key, value]: [string, any]) => value && typeof value === 'object' && value.shares)
+      .map(([ticker, position]: [string, any]) => ({
+        ticker,
+        units: position.shares,
+        cost_basis: position.cost_basis
+      }));
+  }
+  
+  const riskSettings = portfolio.settings || {
+    max_single_name_weight: 0.1,
+    max_sector_weight: 0.3,
+    target_beta: 1.0,
+    max_beta_deviation: 0.5
+  };
   
   let totalValue = 0;
   let totalCost = 0;

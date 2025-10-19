@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinMate PNG Logo Generator</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 1200px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        
+        .logo-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }
+        
+        .logo-item {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            border: 2px solid #e9ecef;
+        }
+        
+        .logo-item h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .logo-canvas {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .download-btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin: 10px;
+            transition: transform 0.2s;
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .size-info {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 FinMate PNG Logo Generator</h1>
+        <p>High-quality PNG logos in multiple sizes for your hackathon submission</p>
+        
+        <div class="logo-preview">
+            <!-- Main Logo -->
+            <div class="logo-item">
+                <h3>Main Logo (400x120px)</h3>
+                <canvas id="mainLogo" class="logo-canvas" width="400" height="120"></canvas>
+                <div class="size-info">Perfect for headers, presentations, and web banners</div>
+                <button class="download-btn" onclick="downloadLogo('mainLogo', 'finmate-logo-main.png')">Download Main Logo</button>
+            </div>
+            
+            <!-- Square Icon -->
+            <div class="logo-item">
+                <h3>Square Icon (200x200px)</h3>
+                <canvas id="squareIcon" class="logo-canvas" width="200" height="200"></canvas>
+                <div class="size-info">Ideal for app icons, social media, and favicons</div>
+                <button class="download-btn" onclick="downloadLogo('squareIcon', 'finmate-icon-square.png')">Download Square Icon</button>
+            </div>
+            
+            <!-- Compact Logo -->
+            <div class="logo-item">
+                <h3>Compact Logo (300x80px)</h3>
+                <canvas id="compactLogo" class="logo-canvas" width="300" height="80"></canvas>
+                <div class="size-info">Great for email signatures and small spaces</div>
+                <button class="download-btn" onclick="downloadLogo('compactLogo', 'finmate-logo-compact.png')">Download Compact Logo</button>
+            </div>
+            
+            <!-- Large Banner -->
+            <div class="logo-item">
+                <h3>Banner Logo (600x150px)</h3>
+                <canvas id="bannerLogo" class="logo-canvas" width="600" height="150"></canvas>
+                <div class="size-info">Perfect for demo videos and large displays</div>
+                <button class="download-btn" onclick="downloadLogo('bannerLogo', 'finmate-logo-banner.png')">Download Banner Logo</button>
+            </div>
+            
+            <!-- Favicon -->
+            <div class="logo-item">
+                <h3>Favicon (32x32px)</h3>
+                <canvas id="favicon" class="logo-canvas" width="32" height="32" style="image-rendering: pixelated;"></canvas>
+                <div class="size-info">Website favicon and small app icons</div>
+                <button class="download-btn" onclick="downloadLogo('favicon', 'finmate-favicon.png')">Download Favicon</button>
+            </div>
+            
+            <!-- High Res Icon -->
+            <div class="logo-item">
+                <h3>High Res Icon (512x512px)</h3>
+                <canvas id="highResIcon" class="logo-canvas" width="512" height="512"></canvas>
+                <div class="size-info">App store icons and high-resolution displays</div>
+                <button class="download-btn" onclick="downloadLogo('highResIcon', 'finmate-icon-hires.png')">Download High Res Icon</button>
+            </div>
+        </div>
+        
+        <div style="margin-top: 30px;">
+            <button class="download-btn" onclick="downloadAllLogos()" style="font-size: 1.2rem; padding: 15px 30px;">📦 Download All Logos</button>
+        </div>
+    </div>
+    
+    <script>
+        // Color palette
+        const colors = {
+            primary: '#667eea',
+            secondary: '#764ba2',
+            text: '#333',
+            subtitle: '#666',
+            white: '#ffffff'
+        };
+        
+        function createGradient(ctx, x1, y1, x2, y2) {
+            const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+            gradient.addColorStop(0, colors.primary);
+            gradient.addColorStop(1, colors.secondary);
+            return gradient;
+        }
+        
+        function createRadialGradient(ctx, x, y, r) {
+            const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
+            gradient.addColorStop(0, colors.primary);
+            gradient.addColorStop(1, colors.secondary);
+            return gradient;
+        }
+        
+        function drawMainLogo(canvas) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.white;
+            ctx.fillRect(0, 0, width, height);
+            
+            // F Icon
+            const iconSize = 60;
+            const iconX = 20;
+            const iconY = (height - iconSize) / 2;
+            
+            // Icon background with gradient
+            const iconGradient = createGradient(ctx, iconX, iconY, iconX + iconSize, iconY + iconSize);
+            ctx.fillStyle = iconGradient;
+            ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            
+            // Rounded corners for icon
+            ctx.globalCompositeOperation = 'destination-in';
+            ctx.beginPath();
+            ctx.roundRect(iconX, iconY, iconSize, iconSize, 12);
+            ctx.fill();
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // F letter
+            ctx.fillStyle = colors.white;
+            ctx.font = 'bold 30px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('F', iconX + iconSize/2, iconY + iconSize/2 + 10);
+            
+            // FinMate text
+            const textX = iconX + iconSize + 20;
+            const textGradient = createGradient(ctx, textX, 0, textX + 200, 0);
+            ctx.fillStyle = textGradient;
+            ctx.font = 'bold 28px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('FinMate', textX, height/2 - 5);
+            
+            // Subtitle
+            ctx.fillStyle = colors.subtitle;
+            ctx.font = '14px Arial';
+            ctx.fillText('AI Portfolio Advisor', textX, height/2 + 15);
+        }
+        
+        function drawSquareIcon(canvas) {
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.white;
+            ctx.fillRect(0, 0, size, size);
+            
+            // Background circle with gradient
+            const centerX = size / 2;
+            const centerY = size / 2;
+            const radius = size * 0.4;
+            
+            const gradient = createRadialGradient(ctx, centerX, centerY, radius);
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // F letter
+            ctx.fillStyle = colors.white;
+            ctx.font = `bold ${size * 0.4}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText('F', centerX, centerY + size * 0.15);
+            
+            // Decorative dots
+            const dotSize = size * 0.03;
+            ctx.fillStyle = colors.white;
+            ctx.globalAlpha = 0.3;
+            
+            // Top left
+            ctx.beginPath();
+            ctx.arc(centerX - radius * 0.6, centerY - radius * 0.6, dotSize, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Top right
+            ctx.beginPath();
+            ctx.arc(centerX + radius * 0.6, centerY - radius * 0.6, dotSize * 0.8, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Bottom left
+            ctx.beginPath();
+            ctx.arc(centerX - radius * 0.6, centerY + radius * 0.6, dotSize * 0.8, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Bottom right
+            ctx.beginPath();
+            ctx.arc(centerX + radius * 0.6, centerY + radius * 0.6, dotSize, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.globalAlpha = 1;
+        }
+        
+        function drawCompactLogo(canvas) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.white;
+            ctx.fillRect(0, 0, width, height);
+            
+            // Smaller F Icon
+            const iconSize = 50;
+            const iconX = 15;
+            const iconY = (height - iconSize) / 2;
+            
+            const iconGradient = createGradient(ctx, iconX, iconY, iconX + iconSize, iconY + iconSize);
+            ctx.fillStyle = iconGradient;
+            ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            
+            // Rounded corners
+            ctx.globalCompositeOperation = 'destination-in';
+            ctx.beginPath();
+            ctx.roundRect(iconX, iconY, iconSize, iconSize, 10);
+            ctx.fill();
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // F letter
+            ctx.fillStyle = colors.white;
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('F', iconX + iconSize/2, iconY + iconSize/2 + 8);
+            
+            // FinMate text (no subtitle for compact)
+            const textX = iconX + iconSize + 15;
+            const textGradient = createGradient(ctx, textX, 0, textX + 150, 0);
+            ctx.fillStyle = textGradient;
+            ctx.font = 'bold 22px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('FinMate', textX, height/2 + 8);
+        }
+        
+        function drawBannerLogo(canvas) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.white;
+            ctx.fillRect(0, 0, width, height);
+            
+            // Large F Icon
+            const iconSize = 100;
+            const iconX = 30;
+            const iconY = (height - iconSize) / 2;
+            
+            const iconGradient = createGradient(ctx, iconX, iconY, iconX + iconSize, iconY + iconSize);
+            ctx.fillStyle = iconGradient;
+            ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            
+            // Rounded corners
+            ctx.globalCompositeOperation = 'destination-in';
+            ctx.beginPath();
+            ctx.roundRect(iconX, iconY, iconSize, iconSize, 20);
+            ctx.fill();
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // F letter
+            ctx.fillStyle = colors.white;
+            ctx.font = 'bold 50px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('F', iconX + iconSize/2, iconY + iconSize/2 + 18);
+            
+            // FinMate text
+            const textX = iconX + iconSize + 30;
+            const textGradient = createGradient(ctx, textX, 0, textX + 300, 0);
+            ctx.fillStyle = textGradient;
+            ctx.font = 'bold 42px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('FinMate', textX, height/2 - 8);
+            
+            // Subtitle
+            ctx.fillStyle = colors.subtitle;
+            ctx.font = '20px Arial';
+            ctx.fillText('AI Portfolio Advisor', textX, height/2 + 25);
+        }
+        
+        function drawFavicon(canvas) {
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.white;
+            ctx.fillRect(0, 0, size, size);
+            
+            // Simple square with F
+            const margin = 2;
+            const iconSize = size - margin * 2;
+            
+            const gradient = createGradient(ctx, margin, margin, margin + iconSize, margin + iconSize);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(margin, margin, iconSize, iconSize);
+            
+            // F letter
+            ctx.fillStyle = colors.white;
+            ctx.font = `bold ${size * 0.6}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText('F', size/2, size/2 + size * 0.2);
+        }
+        
+        function drawHighResIcon(canvas) {
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            
+            // Clear canvas
+            ctx.fillStyle = colors.white;
+            ctx.fillRect(0, 0, size, size);
+            
+            // Large background circle
+            const centerX = size / 2;
+            const centerY = size / 2;
+            const radius = size * 0.4;
+            
+            const gradient = createRadialGradient(ctx, centerX, centerY, radius);
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // F letter
+            ctx.fillStyle = colors.white;
+            ctx.font = `bold ${size * 0.4}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText('F', centerX, centerY + size * 0.15);
+            
+            // Decorative elements
+            const dotSize = size * 0.02;
+            ctx.fillStyle = colors.white;
+            ctx.globalAlpha = 0.3;
+            
+            // Four corner dots
+            const positions = [
+                {x: centerX - radius * 0.6, y: centerY - radius * 0.6},
+                {x: centerX + radius * 0.6, y: centerY - radius * 0.6},
+                {x: centerX - radius * 0.6, y: centerY + radius * 0.6},
+                {x: centerX + radius * 0.6, y: centerY + radius * 0.6}
+            ];
+            
+            positions.forEach((pos, i) => {
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, dotSize * (i % 2 === 0 ? 1 : 0.8), 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            
+            ctx.globalAlpha = 1;
+        }
+        
+        function downloadLogo(canvasId, filename) {
+            const canvas = document.getElementById(canvasId);
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+        
+        function downloadAllLogos() {
+            const logos = [
+                {id: 'mainLogo', name: 'finmate-logo-main.png'},
+                {id: 'squareIcon', name: 'finmate-icon-square.png'},
+                {id: 'compactLogo', name: 'finmate-logo-compact.png'},
+                {id: 'bannerLogo', name: 'finmate-logo-banner.png'},
+                {id: 'favicon', name: 'finmate-favicon.png'},
+                {id: 'highResIcon', name: 'finmate-icon-hires.png'}
+            ];
+            
+            logos.forEach((logo, index) => {
+                setTimeout(() => {
+                    downloadLogo(logo.id, logo.name);
+                }, index * 500); // Stagger downloads
+            });
+        }
+        
+        // Initialize all logos when page loads
+        window.onload = function() {
+            drawMainLogo(document.getElementById('mainLogo'));
+            drawSquareIcon(document.getElementById('squareIcon'));
+            drawCompactLogo(document.getElementById('compactLogo'));
+            drawBannerLogo(document.getElementById('bannerLogo'));
+            drawFavicon(document.getElementById('favicon'));
+            drawHighResIcon(document.getElementById('highResIcon'));
+        };
+    </script>
+</body>
+</html>

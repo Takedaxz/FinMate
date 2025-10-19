@@ -1,6 +1,15 @@
 # FinMate - AI Portfolio Advisor
 
-> **An AWS-native, reasoning-first personal finance agent** that analyzes stock portfolios, explains risks, and proposes actionable rebalancing suggestions. Built for the AWS AI Agent Global Hackathon.
+<div align="center">
+  <img src="logo.svg" alt="FinMate Logo" width="200"/>
+  
+  > **An AWS-native, reasoning-first personal finance agent** that analyzes stock portfolios, explains risks, and proposes actionable rebalancing suggestions. Built for the AWS AI Agent Global Hackathon.
+  
+  [![AWS](https://img.shields.io/badge/AWS-Bedrock%20Agent-orange?style=for-the-badge&logo=amazon-aws)](https://aws.amazon.com/bedrock/)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+  [![CDK](https://img.shields.io/badge/AWS-CDK-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/cdk/)
+  [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+</div>
 
 ## 🏆 Hackathon Requirements Met
 
@@ -9,6 +18,9 @@
 ✅ **Reasoning LLM**: Claude 3 Sonnet for decision-making  
 ✅ **Autonomous Capabilities**: EventBridge daily checks + agent tool orchestration  
 ✅ **External Integrations**: Alpha Vantage API, S3 storage, Lambda tools  
+✅ **Complete Infrastructure**: CDK-deployed serverless architecture  
+✅ **Web Interface**: Modern responsive UI with real-time analysis  
+✅ **Professional Reports**: HTML reports with interactive charts  
 
 **Agent ID**: Available in CloudFormation outputs after deployment  
 **Verify**: Go to AWS Console → Bedrock → Agents to see the deployed agent
@@ -51,37 +63,95 @@ npm run deploy
 
 ## 🏗️ Architecture
 
-```
-[Web UI] → [API Gateway] → [App Lambda] → [Bedrock Agent (AWS Resource)]
-                                                    ↓
-                                        ┌───────────┴───────────┐
-                                        ↓                       ↓
-                              [Agent Tools Lambda]    [Claude 3 Sonnet]
-                                        ↓
-                        ┌───────────────┼───────────────┐
-                        ↓               ↓               ↓
-              [Market Data]    [Compute Metrics]  [Write Report]
-                        ↓               ↓               ↓
-              [Alpha Vantage]      [S3 Data]      [S3 Reports]
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        UI[Web UI]
+        API_CLIENT[API Client]
+    end
+    
+    subgraph "AWS API Gateway"
+        GW[API Gateway]
+    end
+    
+    subgraph "AWS Lambda Functions"
+        APP[Main App Lambda]
+        AGENT_TOOLS[Agent Tools Lambda]
+        MARKET[Market Data Lambda]
+        METRICS[Compute Metrics Lambda]
+        REPORT[Write Report Lambda]
+    end
+    
+    subgraph "AWS Bedrock Agent"
+        BEDROCK_AGENT[Bedrock Agent]
+        CLAUDE[Claude 3 Sonnet]
+    end
+    
+    subgraph "AWS Storage"
+        S3_PORTFOLIOS[Portfolio Storage]
+        S3_REPORTS[Report Storage]
+        S3_CACHE[Market Data Cache]
+        DYNAMO[Analysis Jobs Table]
+    end
+    
+    subgraph "External APIs"
+        ALPHA[Alpha Vantage API]
+        YAHOO[Yahoo Finance API]
+    end
+    
+    subgraph "AWS EventBridge"
+        SCHEDULER[Daily Check Scheduler]
+    end
+    
+    UI --> GW
+    API_CLIENT --> GW
+    GW --> APP
+    
+    APP --> BEDROCK_AGENT
+    BEDROCK_AGENT --> AGENT_TOOLS
+    BEDROCK_AGENT --> CLAUDE
+    
+    AGENT_TOOLS --> MARKET
+    AGENT_TOOLS --> METRICS
+    AGENT_TOOLS --> REPORT
+    
+    MARKET --> ALPHA
+    MARKET --> YAHOO
+    MARKET --> S3_CACHE
+    
+    METRICS --> S3_PORTFOLIOS
+    REPORT --> S3_REPORTS
+    
+    APP --> DYNAMO
+    SCHEDULER --> APP
+    
+    S3_PORTFOLIOS --> APP
+    S3_CACHE --> MARKET
 ```
 
 ### Core Components
 
 - **Amazon Bedrock Agent**: Real AWS agent resource with autonomous tool orchestration
 - **Claude 3 Sonnet**: Foundation model for reasoning and decision-making
-- **AWS Lambda**: Tool orchestrator + individual tool functions
+- **Agent Tools Lambda**: Orchestrates tool calls from Bedrock Agent
+- **Market Data Lambda**: Fetches real-time stock data (Python with yfinance)
+- **Compute Metrics Lambda**: Calculates portfolio analytics and risk metrics
+- **Write Report Lambda**: Generates professional HTML reports
 - **Amazon S3**: Portfolio storage, market data cache, and report generation
-- **API Gateway**: RESTful API endpoints
+- **DynamoDB**: Analysis job tracking and status management
+- **API Gateway**: RESTful API endpoints with CORS support
 - **EventBridge**: Scheduled daily portfolio checks
+- **CloudFront**: Web hosting and CDN
 
 ### Agent Architecture
 
 The Bedrock Agent autonomously:
-1. Receives portfolio analysis request
-2. Decides which tools to call (get_market_data, compute_metrics, write_report)
-3. Calls Agent Tools Lambda, which routes to specific tool Lambdas
-4. Analyzes results using Claude 3 Sonnet
-5. Returns recommendations with rationale
+1. **Receives** portfolio analysis request via main app Lambda
+2. **Decides** which tools to call based on the request context
+3. **Orchestrates** tool execution through Agent Tools Lambda
+4. **Analyzes** results using Claude 3 Sonnet reasoning
+5. **Returns** structured recommendations with rationale
+6. **Generates** professional reports with actionable insights
 
 ## 📊 Features
 
@@ -121,15 +191,26 @@ The Bedrock Agent autonomously:
 │   └── finmate-stack.ts        # Infrastructure with Bedrock Agent
 ├── lambda/
 │   ├── app.ts                  # Main Lambda (invokes Bedrock Agent)
-│   ├── agent-tools.ts          # Agent tool orchestrator (NEW)
-│   ├── market-data-python.py  # Market data tool
+│   ├── agent-tools.ts          # Agent tool orchestrator
+│   ├── market-data-python.py  # Market data tool (Python)
 │   ├── compute-metrics.ts      # Portfolio calculations tool
-│   └── write-report.ts         # Report generation tool
+│   ├── write-report.ts         # Report generation tool
+│   ├── rate-limiter.ts         # Bedrock rate limiting
+│   └── package.json            # Lambda dependencies
+├── lambda-layer/
+│   └── python/                 # Python dependencies (yfinance, pandas, etc.)
 ├── web/
-│   └── index.html              # Web UI
-├── AGENT_SETUP.md              # Manual agent setup guide (NEW)
-├── sample-portfolio.csv        # Sample data
-└── prd.md                      # Product requirements
+│   ├── index.html              # Web UI
+│   ├── script.js               # Frontend JavaScript
+│   └── styles.css              # CSS styling
+├── logo.svg                    # FinMate logo
+├── logo-icon.svg               # Square icon version
+├── logo-png-generator.html     # PNG logo generator
+├── sample-portfolio.csv        # Sample portfolio data
+├── prd.md                      # Product requirements
+├── architecture.md             # System architecture
+├── demo.md                     # Demo guide
+└── DEPLOYMENT_GUIDE.md         # Deployment instructions
 ```
 
 ## 🛠️ Development

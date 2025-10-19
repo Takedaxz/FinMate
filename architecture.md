@@ -2,7 +2,7 @@
 
 ## System Overview
 
-**Key Update**: FinMate now uses a **real AWS Bedrock Agent** resource that autonomously orchestrates tool calls via AgentCore primitives. The agent is visible in AWS Console under Bedrock → Agents.
+**FinMate** is a complete serverless AI portfolio advisor built on AWS with a **real Bedrock Agent** that autonomously orchestrates tool calls via AgentCore primitives. The agent is visible in AWS Console under Bedrock → Agents.
 
 ```mermaid
 graph TB
@@ -17,90 +17,118 @@ graph TB
     
     subgraph "AWS Lambda Functions"
         APP[Main App Lambda]
+        AGENT_TOOLS[Agent Tools Lambda]
         MARKET[Market Data Lambda]
         METRICS[Compute Metrics Lambda]
         REPORT[Write Report Lambda]
     end
     
-    subgraph "AWS Bedrock"
-        BEDROCK[Claude 3 Sonnet]
+    subgraph "AWS Bedrock Agent"
+        BEDROCK_AGENT[Bedrock Agent]
+        CLAUDE[Claude 3 Sonnet]
     end
     
-    subgraph "AWS S3"
-        PORTFOLIOS[Portfolio Storage]
-        REPORTS[Report Storage]
-        CACHE[Market Data Cache]
+    subgraph "AWS Storage"
+        S3_PORTFOLIOS[Portfolio Storage]
+        S3_REPORTS[Report Storage]
+        S3_CACHE[Market Data Cache]
+        DYNAMO[Analysis Jobs Table]
     end
     
     subgraph "External APIs"
         ALPHA[Alpha Vantage API]
+        YAHOO[Yahoo Finance API]
     end
     
     subgraph "AWS EventBridge"
         SCHEDULER[Daily Check Scheduler]
     end
     
-    UI --> GW
+    subgraph "AWS CloudFront"
+        CDN[Web Distribution]
+    end
+    
+    UI --> CDN
+    CDN --> GW
     API_CLIENT --> GW
     GW --> APP
     
-    APP --> MARKET
-    APP --> METRICS
-    APP --> REPORT
-    APP --> BEDROCK
+    APP --> BEDROCK_AGENT
+    BEDROCK_AGENT --> AGENT_TOOLS
+    BEDROCK_AGENT --> CLAUDE
+    
+    AGENT_TOOLS --> MARKET
+    AGENT_TOOLS --> METRICS
+    AGENT_TOOLS --> REPORT
     
     MARKET --> ALPHA
-    MARKET --> CACHE
+    MARKET --> YAHOO
+    MARKET --> S3_CACHE
     
-    METRICS --> PORTFOLIOS
-    REPORT --> REPORTS
+    METRICS --> S3_PORTFOLIOS
+    REPORT --> S3_REPORTS
     
+    APP --> DYNAMO
     SCHEDULER --> APP
     
-    PORTFOLIOS --> APP
-    CACHE --> MARKET
+    S3_PORTFOLIOS --> APP
+    S3_CACHE --> MARKET
 ```
 
 ## Data Flow
 
 ### 1. Portfolio Upload & Analysis
 ```
-User → Web UI → API Gateway → Main App Lambda
+User → Web UI → CloudFront → API Gateway → Main App Lambda
+                                                    ↓
+                                            Save to S3 (Portfolio Storage)
+                                                    ↓
+                                            Create Analysis Job (DynamoDB)
+                                                    ↓
+                                            Invoke Bedrock Agent
+                                                    ↓
+                                    ┌───────────────┴───────────────┐
+                                    ↓                               ↓
+                            Agent Tools Lambda              Claude 3 Sonnet
                                     ↓
-                            Save to S3 (Portfolio Storage)
-                                    ↓
-                            Invoke Market Data Lambda
-                                    ↓
-                            Fetch from Alpha Vantage API
-                                    ↓
-                            Cache in S3
-                                    ↓
-                            Invoke Compute Metrics Lambda
-                                    ↓
-                            Calculate portfolio metrics
-                                    ↓
-                            Send to Bedrock for AI analysis
-                                    ↓
-                            Invoke Write Report Lambda
-                                    ↓
-                            Generate HTML/Markdown report
-                                    ↓
-                            Save to S3 (Report Storage)
-                                    ↓
-                            Return analysis results to user
+                        ┌───────────┼───────────┐
+                        ↓           ↓           ↓
+                Market Data    Compute      Write Report
+                Lambda         Metrics      Lambda
+                        ↓           ↓           ↓
+                Alpha Vantage   S3 Data    S3 Reports
+                Yahoo Finance
+                        ↓
+                S3 Cache (15min TTL)
+                                                    ↓
+                                            Update Job Status
+                                                    ↓
+                                            Return Results
 ```
 
 ### 2. Autonomous Daily Check
 ```
-EventBridge Scheduler → Main App Lambda
-                              ↓
-                      Load user portfolios from S3
-                              ↓
-                      Run analysis (same flow as above)
-                              ↓
-                      Generate daily summary report
-                              ↓
-                      Store in S3
+EventBridge Scheduler (Daily 9 AM UTC) → Main App Lambda
+                                                    ↓
+                                            Load portfolios from S3
+                                                    ↓
+                                            Invoke Bedrock Agent
+                                                    ↓
+                                    ┌───────────────┴───────────────┐
+                                    ↓                               ↓
+                            Agent Tools Lambda              Claude 3 Sonnet
+                                    ↓
+                        ┌───────────┼───────────┐
+                        ↓           ↓           ↓
+                Market Data    Compute      Write Report
+                Lambda         Metrics      Lambda
+                        ↓           ↓           ↓
+                Cached Data    Portfolio   Daily Summary
+                (if available) Analysis    Report
+                                                    ↓
+                                            Store in S3
+                                                    ↓
+                                            Update Job Status
 ```
 
 ## Component Details
@@ -110,11 +138,13 @@ EventBridge Scheduler → Main App Lambda
 | Service | Purpose | Configuration |
 |---------|---------|---------------|
 | **API Gateway** | REST API endpoints | CORS enabled, Lambda integration |
-| **Lambda** | Serverless compute | Node.js 18, 5-15 min timeout |
-| **S3** | File storage | SSE-S3 encryption, versioned |
-| **Bedrock** | AI reasoning | Claude 3 Sonnet model |
+| **Lambda** | Serverless compute | Node.js 18 + Python 3.11, 5-15 min timeout |
+| **Bedrock Agent** | AI agent orchestration | Claude 3 Sonnet, AgentCore primitives |
+| **S3** | File storage | SSE-S3 encryption, versioned, lifecycle policies |
+| **DynamoDB** | Job tracking | Pay-per-request, 7-day TTL |
 | **EventBridge** | Scheduling | Daily cron at 9 AM UTC |
-| **IAM** | Access control | Least-privilege roles |
+| **CloudFront** | Web hosting | S3 origin, HTTPS redirect, caching |
+| **IAM** | Access control | Least-privilege roles, service principals |
 
 ### Lambda Functions
 
@@ -123,17 +153,29 @@ EventBridge Scheduler → Main App Lambda
 - **Triggers**: API Gateway, EventBridge
 - **Actions**: 
   - Portfolio upload/retrieval
-  - Coordinates tool invocations
-  - Generates AI analysis via Bedrock
+  - Invokes Bedrock Agent for analysis
+  - Manages async job processing
   - Returns formatted results
+- **Runtime**: Node.js 18.x, 15-minute timeout
 
-#### Market Data Lambda (`market-data.ts`)
+#### Agent Tools Lambda (`agent-tools.ts`)
+- **Purpose**: Routes Bedrock Agent tool calls to specific functions
+- **Triggers**: Bedrock Agent via Action Group
+- **Actions**:
+  - Routes to market data, metrics, or report functions
+  - Handles agent parameter parsing
+  - Returns structured responses
+- **Runtime**: Node.js 18.x, 5-minute timeout
+
+#### Market Data Lambda (`market-data-python.py`)
 - **Purpose**: Fetches real-time market data
-- **External API**: Alpha Vantage (free tier)
+- **External APIs**: Alpha Vantage + Yahoo Finance
 - **Features**: 
   - Rate limiting (5 calls/minute)
   - S3 caching (15-minute TTL)
-  - Error handling with fallbacks
+  - Endpoint rotation and retry logic
+  - User-Agent rotation
+- **Runtime**: Python 3.11, 30-second timeout
 
 #### Compute Metrics Lambda (`compute-metrics.ts`)
 - **Purpose**: Calculates portfolio analytics
@@ -142,6 +184,7 @@ EventBridge Scheduler → Main App Lambda
   - Sector exposure analysis
   - Risk flag identification
   - Portfolio beta calculation
+- **Runtime**: Node.js 18.x, 5-minute timeout
 
 #### Write Report Lambda (`write-report.ts`)
 - **Purpose**: Generates formatted reports
@@ -150,6 +193,7 @@ EventBridge Scheduler → Main App Lambda
   - Responsive design
   - Interactive charts
   - Pre-signed URLs for access
+- **Runtime**: Node.js 18.x, 5-minute timeout
 
 ## Security & Compliance
 

@@ -394,6 +394,9 @@ export class FinMateStack extends cdk.Stack {
     const analyzeStatus = analyze.addResource('{job_id}');
     analyzeStatus.addMethod('GET', appIntegration); // Check analysis status
 
+    const metrics = portfolio.addResource('metrics');
+    metrics.addMethod('POST', appIntegration); // Get portfolio metrics directly
+
     const report = api.root.addResource('report');
     report.addMethod('GET', appIntegration);
 

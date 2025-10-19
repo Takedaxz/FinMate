@@ -73,6 +73,8 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     } else if (httpMethod === 'GET' && path.startsWith('/portfolio/analyze/')) {
       const jobId = event.pathParameters?.job_id || path.split('/').pop();
       return await handleGetAnalysisStatus(jobId!);
+    } else if (httpMethod === 'POST' && path === '/portfolio/metrics') {
+      return await handlePortfolioMetrics(body);
     } else if (httpMethod === 'GET' && path === '/report') {
       return await handleGetReport(event);
     } else if (httpMethod === 'POST' && path === '/simulate/rebalance') {
@@ -264,6 +266,75 @@ async function handleGetAnalysisStatus(jobId: string): Promise<APIGatewayProxyRe
         error: 'Failed to get status',
         message: error instanceof Error ? error.message : 'Unknown error',
       }),
+    };
+  }
+}
+
+async function handlePortfolioMetrics(body: any): Promise<APIGatewayProxyResult> {
+  try {
+    console.log('Getting portfolio metrics for:', body.portfolio_id);
+    
+    const portfolioId = body.portfolio_id;
+    if (!portfolioId) {
+      return {
+        statusCode: 400,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: 'portfolio_id is required' })
+      };
+    }
+    
+    // Load portfolio from S3
+    const portfolio = await getPortfolio(portfolioId);
+    if (!portfolio) {
+      return {
+        statusCode: 404,
+        headers: corsHeaders,
+        body: JSON.stringify({ error: 'Portfolio not found' })
+      };
+    }
+    
+    // Get market data
+    const tickers = portfolio.positions.map((p: any) => p.ticker);
+    const marketDataResponse = await lambdaClient.send(new InvokeCommand({
+      FunctionName: process.env.MARKET_DATA_FUNCTION!,
+      Payload: JSON.stringify({ tickers })
+    }));
+    
+    const marketDataResult = JSON.parse(new TextDecoder().decode(marketDataResponse.Payload));
+    if (marketDataResult.statusCode !== 200) {
+      throw new Error('Failed to get market data');
+    }
+    
+    const marketData = JSON.parse(marketDataResult.body);
+    
+    // Compute metrics
+    const metricsResponse = await lambdaClient.send(new InvokeCommand({
+      FunctionName: process.env.COMPUTE_METRICS_FUNCTION!,
+      Payload: JSON.stringify({
+        portfolio,
+        market_data: marketData
+      })
+    }));
+    
+    const metricsResult = JSON.parse(new TextDecoder().decode(metricsResponse.Payload));
+    if (metricsResult.statusCode !== 200) {
+      throw new Error('Failed to compute metrics');
+    }
+    
+    const metrics = JSON.parse(metricsResult.body);
+    
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify(metrics)
+    };
+    
+  } catch (error) {
+    console.error('Error getting portfolio metrics:', error);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({ error: 'Internal server error' })
     };
   }
 }
@@ -466,22 +537,24 @@ async function invokeBedrockAgent(portfolio: Portfolio, portfolioId: string): Pr
 
   try {
     // Create comprehensive input for the agent
-    const agentInput = `Please analyze this portfolio and provide recommendations:
+    const agentInput = `I have a portfolio that needs analysis. Here are the details:
 
 Portfolio ID: ${portfolioId}
 User Risk Preference: ${portfolio.settings.risk}
 Number of Positions: ${portfolio.positions.length}
 
-Positions:
+Portfolio Positions:
 ${portfolio.positions.map(p => `- ${p.ticker}: ${p.units} shares at $${p.cost_basis} cost basis`).join('\n')}
 
-Please use your tools to:
-1. Get current market data for all tickers
-2. Compute portfolio metrics including P&L, beta, sector exposure, and risk flags  
-3. Analyze the results and provide 2-3 specific recommendations
-4. Generate a professional report
+Please analyze this portfolio by:
+1. First, use the get_market_data tool to fetch current prices for all tickers: ${portfolio.positions.map(p => p.ticker).join(', ')}
+2. Then, use the compute_metrics tool to calculate portfolio metrics using the portfolio data and market data
+3. Finally, use the write_report tool to generate a professional analysis report
 
-Focus on diversification, risk management, and optimization opportunities based on ${portfolio.settings.risk} risk tolerance.`;
+The portfolio data is: ${JSON.stringify(portfolio)}
+The market data should include current prices, sectors, and betas for all tickers.
+
+Provide specific recommendations for diversification, risk management, and optimization based on ${portfolio.settings.risk} risk tolerance.`;
 
     console.log('Agent Input:', agentInput);
     console.log('Agent ID:', agentId);
@@ -579,7 +652,7 @@ function parseAgentResponse(responseText: string, traces: any[]): any {
   }
 
   // Extract report URL if mentioned
-  const urlMatch = responseText.match(/https?:\/\/[^\s]+/);
+  const urlMatch = responseText.match(/https?:\/\/[^\s\)]+/);
   if (urlMatch) {
     reportUrl = urlMatch[0];
   }
